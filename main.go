@@ -26,12 +26,9 @@ type gitUpdate struct {
 var (
 	list   = flag.Bool("list", true, "List .git directories found in your $HOME directory.")
 	update = flag.Bool("update", false, "Update all .git directories found in your $HOME directory.")
+	green  = color.New(color.FgGreen).SprintFunc()
+	red    = color.New(color.FgRed).SprintFunc()
 	done   = make(chan struct{})
-
-	// "colors" (colors, colors...)
-	cyan  = color.New(color.FgCyan).SprintFunc()
-	green = color.New(color.FgGreen).SprintFunc()
-	red   = color.New(color.FgRed).SprintFunc()
 )
 
 func main() {
@@ -48,11 +45,10 @@ func main() {
 	}
 
 	if *list {
-		printGitDirectories(done, usr.HomeDir, dirs)
+		listDirectories(done, usr.HomeDir, dirs)
 	} else {
-		updateGitDirectories(done, dirs)
+		updateDirectories(done, dirs)
 	}
-
 	<-done
 }
 
@@ -91,15 +87,12 @@ func readDir(dir string, wg *sync.WaitGroup, out chan<- gitDirectory) {
 	}
 }
 
-// sema is a counting semaphore for limiting concurrency in dirents
 var sema = make(chan struct{}, 20)
 
 func dirents(dir string) []os.FileInfo {
 	select {
 	case sema <- struct{}{}:
-		// acquire token
 	}
-	// release token
 	defer func() { <-sema }()
 
 	f, err := os.Open(dir)
@@ -128,23 +121,23 @@ func listGitDirectories(dirs <-chan gitDirectory) <-chan []string {
 	return out
 }
 
-func printGitDirectories(done chan struct{}, dir string, dirs <-chan gitDirectory) {
+func listDirectories(done chan struct{}, dir string, dirs <-chan gitDirectory) {
 
 	defer close(done)
 
-	fmt.Println("Git repositories")
+	fmt.Println("Git repositories for in", dir)
 	for s := range listGitDirectories(dirs) {
-		fmt.Printf("%s - %s\n", cyan(s[0]), green(s[1]))
+		fmt.Printf("%s - %s\n", s[0], green(s[1]))
 	}
 }
 
-func updateGitDirectories(done chan struct{}, dirs <-chan gitDirectory) {
+func updateDirectories(done chan struct{}, dirs <-chan gitDirectory) {
 	defer close(done)
 
 	var status string
 	var fn func(a ...interface{}) string
 
-	for s := range updateGitDir(dirs) {
+	for s := range updateGitDirectories(dirs) {
 		if s.result {
 			status = "updated"
 			fn = green
@@ -152,11 +145,11 @@ func updateGitDirectories(done chan struct{}, dirs <-chan gitDirectory) {
 			status = "not updated"
 			fn = red
 		}
-		fmt.Printf("[%s] - %s\n", cyan(s.path), fn(status))
+		fmt.Printf("[%s] - %s\n", s.path, fn(status))
 	}
 }
 
-func updateGitDir(dirs <-chan gitDirectory) <-chan gitUpdate {
+func updateGitDirectories(dirs <-chan gitDirectory) <-chan gitUpdate {
 
 	var wg sync.WaitGroup
 	out := make(chan gitUpdate)
@@ -164,6 +157,7 @@ func updateGitDir(dirs <-chan gitDirectory) <-chan gitUpdate {
 	update := func(d gitDirectory) {
 		wg.Add(1)
 		go func(path string) {
+
 			u := gitUpdate{path: path, result: true}
 
 			os.Chdir(path)
@@ -182,6 +176,7 @@ func updateGitDir(dirs <-chan gitDirectory) <-chan gitUpdate {
 			}
 			wg.Done()
 		}(d.root)
+
 	}
 
 	for d := range dirs {
